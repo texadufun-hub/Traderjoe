@@ -1233,6 +1233,34 @@ def run_analysis(checkpoint: bool | None = None):
         for chunk in trace:
             final_state.update(chunk)
 
+        # Structured run artifact: write the typed PM decision + report sections
+        # (JSON food + human MD) and fire-and-log the GCS upload. The CLI streams
+        # the graph directly rather than calling propagate(), so this must happen
+        # here too (mirrors trading_graph._run_graph). Best effort by contract —
+        # never let artifact I/O abort a completed run.
+        import uuid
+
+        from tradingagents.artifacts import persist_run_artifacts
+        try:
+            run_id = getattr(graph, "run_id", None) or str(uuid.uuid4())
+            graph.run_id = run_id
+            persist_run_artifacts(
+                final_state=final_state,
+                pm_decision=final_state.get("pm_decision"),
+                ticker=selections["ticker"],
+                analysis_date=str(selections["analysis_date"]),
+                run_id=run_id,
+                results_dir=config["results_dir"],
+                resolved_config=graph._resolved_artifact_config(),
+            )
+            message_buffer.add_message(
+                "System", f"Run artifact written (run_id {run_id})"
+            )
+        except Exception as exc:  # noqa: BLE001 — artifact persistence is non-fatal
+            message_buffer.add_message(
+                "System", f"Run artifact persistence failed (non-fatal): {exc}"
+            )
+
         # Update all agent statuses to completed
         for agent in message_buffer.agent_status:
             message_buffer.update_agent_status(agent, "completed")
