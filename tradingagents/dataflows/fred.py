@@ -8,6 +8,7 @@ A free API key (https://fred.stlouisfed.org/docs/api/api_key.html) is read from
 ``FRED_API_KEY``; if it is unset the vendor raises ``FredNotConfiguredError`` so
 the routing layer treats it as "unavailable" rather than a hard crash.
 """
+import hashlib
 import logging
 import os
 from datetime import datetime, timedelta
@@ -81,6 +82,15 @@ class FredNotConfiguredError(VendorNotConfiguredError):
     """
 
 
+class FredInvalidKeyError(VendorNotConfiguredError):
+    """Raised when a FRED key is set but FRED rejects it as not registered.
+
+    Distinct from FredNotConfiguredError (key missing) so a preflight can tell
+    the user *which* problem they have. Still a VendorNotConfiguredError so the
+    routing layer treats FRED as unavailable rather than crashing the run.
+    """
+
+
 def get_api_key() -> str:
     """Retrieve the FRED API key from the environment."""
     api_key = os.getenv("FRED_API_KEY")
@@ -90,6 +100,71 @@ def get_api_key() -> str:
             "https://fred.stlouisfed.org/docs/api/api_key.html."
         )
     return api_key
+
+
+def key_fingerprint(api_key: str) -> str:
+    """Return a non-reversible fingerprint of a key, safe to log.
+
+    Identifies *which* key is loaded — for comparing the runtime value against
+    the one in ``.env``/Secret Manager — without exposing the secret itself
+    (logs are shipped to Cloud Logging/GCS, so the plaintext must never appear).
+    Reveals length, a masked head/tail, and a SHA-256 prefix; also flags leading
+    or trailing whitespace, the classic cause of a "not registered" rejection.
+    """
+    n = len(api_key)
+    stripped = api_key.strip()
+    masked = f"{stripped[:4]}…{stripped[-4:]}" if len(stripped) >= 8 else "«short»"
+    digest = hashlib.sha256(api_key.encode()).hexdigest()[:8]
+    ws = ""
+    if api_key != stripped:
+        ws = " [WARNING: leading/trailing whitespace present — likely the cause]"
+    return f"len={n} {masked} sha256:{digest}{ws}"
+
+
+def validate_api_key() -> None:
+    """Preflight the configured FRED key with one lightweight request.
+
+    Distinguishes the two failure modes the vendor otherwise only surfaces once
+    per macro call, mid-run:
+
+    - No key set        -> FredNotConfiguredError
+    - Key set, rejected -> FredInvalidKeyError ("not registered")
+
+    Returns ``None`` on success. A network/transport problem is logged and
+    swallowed (returns ``None``): a flaky connection at startup should not be
+    reported as a bad key, and the per-call routing layer will handle a genuine
+    outage gracefully anyway.
+    """
+    api_key = get_api_key()  # raises FredNotConfiguredError when unset
+    try:
+        response = requests.get(
+            f"{FRED_API_BASE}/series",
+            params={"series_id": "FEDFUNDS", "api_key": api_key, "file_type": "json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        logger.warning("Could not reach FRED to validate FRED_API_KEY: %s", exc)
+        return
+
+    if response.status_code == 400:
+        try:
+            message = response.json().get("error_message", response.text)
+        except ValueError:
+            message = response.text
+        # FRED returns this 400 both for an unregistered key and for a bad
+        # series ID; FEDFUNDS is always valid, so an api_key complaint is the
+        # only expected 400 here.
+        if "api_key" in message.lower():
+            raise FredInvalidKeyError(
+                "FRED rejected FRED_API_KEY as not registered "
+                f"(loaded key: {key_fingerprint(api_key)}). Verify (or "
+                "regenerate) the key at https://fredaccount.stlouisfed.org/apikeys "
+                f"and update your secret. FRED said: {message.strip()}"
+            )
+        logger.warning("Unexpected FRED 400 while validating FRED_API_KEY: %s", message)
+        return
+
+    response.raise_for_status()
 
 
 def _resolve_series_id(indicator: str) -> str:

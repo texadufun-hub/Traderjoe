@@ -86,6 +86,66 @@ class FredConfigTests(unittest.TestCase):
         # Routing relies on this subclassing for "vendor unavailable" handling.
         self.assertTrue(issubclass(fred.FredNotConfiguredError, ValueError))
 
+    def test_invalid_key_is_vendor_not_configured(self):
+        # Routing must treat a rejected key as "vendor unavailable" too.
+        self.assertTrue(
+            issubclass(fred.FredInvalidKeyError, fred.VendorNotConfiguredError)
+        )
+
+
+class _Resp:
+    """Minimal requests.Response stand-in for validate_api_key tests."""
+
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+
+@pytest.mark.unit
+class FredValidateKeyTests(unittest.TestCase):
+    _ENV = {"FRED_API_KEY": "deadbeefdeadbeefdeadbeefdeadbeef"}
+
+    def test_missing_key_raises_not_configured(self):
+        with mock.patch.dict("os.environ", {}, clear=True), \
+                self.assertRaises(fred.FredNotConfiguredError):
+            fred.validate_api_key()
+
+    def test_rejected_key_raises_invalid_key(self):
+        resp = _Resp(400, {"error_message": "Bad Request. The value for variable "
+                                            "api_key is not registered."})
+        with mock.patch.dict("os.environ", self._ENV, clear=True), \
+                mock.patch.object(fred.requests, "get", return_value=resp), \
+                self.assertRaises(fred.FredInvalidKeyError):
+            fred.validate_api_key()
+
+    def test_valid_key_returns_none(self):
+        with mock.patch.dict("os.environ", self._ENV, clear=True), \
+                mock.patch.object(fred.requests, "get", return_value=_Resp(200, {})):
+            self.assertIsNone(fred.validate_api_key())
+
+    def test_network_error_is_swallowed(self):
+        # A transient outage at startup must not be reported as a bad key.
+        import requests as _requests
+        with mock.patch.dict("os.environ", self._ENV, clear=True), \
+                mock.patch.object(
+                    fred.requests, "get",
+                    side_effect=_requests.RequestException("boom")):
+            self.assertIsNone(fred.validate_api_key())
+
+    def test_non_api_key_400_is_swallowed(self):
+        # A 400 that isn't about the key shouldn't be misreported as a bad key.
+        resp = _Resp(400, {"error_message": "Bad Request. Some other problem."})
+        with mock.patch.dict("os.environ", self._ENV, clear=True), \
+                mock.patch.object(fred.requests, "get", return_value=resp):
+            self.assertIsNone(fred.validate_api_key())
+
 
 @pytest.mark.unit
 class FredFormattingTests(unittest.TestCase):

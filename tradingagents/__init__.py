@@ -16,6 +16,17 @@ try:
 except ImportError:
     pass
 
+# After .env is loaded, resolve any env var whose value is a Secret Manager
+# resource path (e.g. FRED_API_KEY=projects/.../secrets/FRED_API_KEY/versions/latest)
+# into its plaintext value, so keys live only in Secret Manager while .env holds
+# just the reference. Best-effort: a failure is logged and the reference is left
+# in place for the consumer to report on. Done here so every entry point
+# (CLI, main.py, programmatic) is covered before any consumer reads a key.
+with contextlib.suppress(ImportError):
+    from .secrets import hydrate_secret_env
+
+    hydrate_secret_env()
+
 # langchain-core 1.3.3 calls surface_langchain_deprecation_warnings() in
 # its own __init__, which prepends default-action filters for its
 # subclassed warning categories. To suppress a specific warning we must
