@@ -141,7 +141,7 @@ def select_analysts(asset_type: AssetType = AssetType.STOCK) -> list[AnalystType
     choices = questionary.checkbox(
         "Select Your [Analysts Team]:",
         choices=[
-            questionary.Choice(display, value=value)
+            questionary.Choice(display, value=value, checked=True)
             for display, value in ANALYST_ORDER
             if value in available_analysts
         ],
