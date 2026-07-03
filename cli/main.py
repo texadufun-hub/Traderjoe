@@ -257,10 +257,10 @@ def create_layout():
         Layout(name="footer", size=3),
     )
     layout["main"].split_column(
-        Layout(name="upper", ratio=3), Layout(name="analysis", ratio=5)
+        Layout(name="upper", ratio=1), Layout(name="analysis", ratio=1)
     )
     layout["upper"].split_row(
-        Layout(name="progress", ratio=2), Layout(name="messages", ratio=3)
+        Layout(name="progress", ratio=1), Layout(name="messages", ratio=1)
     )
     return layout
 
@@ -292,12 +292,21 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         show_footer=False,
         box=box.SIMPLE_HEAD,  # Use simple header with horizontal lines
         title=None,  # Remove the redundant Progress title
-        padding=(0, 2),  # Add horizontal padding
+        padding=(0, 1),  # Tight horizontal padding so rows fit without wrapping
         expand=True,  # Make table expand to fill available space
     )
-    progress_table.add_column("Team", style="cyan", justify="center", width=20)
-    progress_table.add_column("Agent", style="green", justify="center", width=20)
-    progress_table.add_column("Status", style="yellow", justify="center", width=20)
+    # no_wrap keeps each agent on a single line: a wrapped name doubles the row
+    # height, which in the narrow progress pane crops later agents (e.g. the
+    # Fundamentals Analyst) off the bottom. Ellipsis truncates only if truly cramped.
+    progress_table.add_column(
+        "Team", style="cyan", justify="center", no_wrap=True, overflow="ellipsis"
+    )
+    progress_table.add_column(
+        "Agent", style="green", justify="center", no_wrap=True, overflow="ellipsis"
+    )
+    progress_table.add_column(
+        "Status", style="yellow", justify="center", no_wrap=True, overflow="ellipsis"
+    )
 
     # Group agents by team - filter to only include agents in agent_status
     all_teams = {
@@ -359,7 +368,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         progress_table.add_row("─" * 20, "─" * 20, "─" * 20, style="dim")
 
     layout["progress"].update(
-        Panel(progress_table, title="Progress", border_style="cyan", padding=(1, 2))
+        Panel(progress_table, title="Progress", border_style="cyan", padding=(0, 1))
     )
 
     # Messages panel showing recent messages and tool calls
