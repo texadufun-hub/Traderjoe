@@ -17,7 +17,7 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
-    invoke_structured_or_freetext,
+    invoke_structured_capturing,
 )
 
 
@@ -65,7 +65,11 @@ Note: Debt/Equity ratios sourced from yfinance are expressed as percentages (e.g
 
 Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
 
-        final_trade_decision = invoke_structured_or_freetext(
+        # Capture the typed PortfolioDecision alongside the rendered markdown so
+        # the structured run artifact can persist the typed fields directly
+        # instead of scraping them from prose. ``pm_decision`` is None when the
+        # free-text fallback fires (no structured output available).
+        final_trade_decision, pm_decision = invoke_structured_capturing(
             structured_llm,
             llm,
             prompt,
@@ -89,6 +93,7 @@ Be decisive and ground every conclusion in specific evidence from the analysts.{
         return {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
+            "pm_decision": pm_decision,
         }
 
     return portfolio_manager_node
