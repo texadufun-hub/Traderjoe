@@ -39,6 +39,8 @@ Commit to a clear stance whenever the debate's strongest arguments warrant one; 
 
 ---
 
+Note: Debt/Equity ratios sourced from yfinance are expressed as percentages (e.g., 15.63 = 15.63%, not 15.63x). A value below 50% indicates low leverage.
+
 **Debate History:**
 {history}""" + get_language_instruction()
 
