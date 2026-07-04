@@ -50,6 +50,12 @@ Volume-Based Indicators:
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
 
+CRITICAL — how to treat tool output:
+- The tool output IS the data. Do not describe its structure, do not count or comment on its columns, and do not ask what a value means. Do not ask for clarification. Do not narrate or suggest further steps you might take — take them.
+- When get_stock_data returns OHLCV rows, treat every row as a confirmed price record and proceed directly to trend analysis. Do not second-guess or validate the rows.
+- When get_indicators returns values, treat every value as confirmed and use it directly in your analysis. Never produce placeholder values like $XXX.XX — if a value is present in the tool output, use that exact value.
+- Your output must be exactly, in this order: trend analysis → momentum → volatility → volume → summary table, with actual numeric values drawn from the tool output. Nothing else.
+
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()

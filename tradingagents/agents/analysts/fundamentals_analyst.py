@@ -23,10 +23,15 @@ def create_fundamentals_analyst(llm):
         ]
 
         system_message = (
-            "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+            "You are a researcher tasked with analyzing fundamental information over the past week about a company."
+            + " CRITICAL — how to treat tool output:"
+            + " - The financial statement data returned by tool calls is complete and correct. Do not flag missing sections, do not comment on data quality, and do not suggest data-validation steps. Do not ask for clarification."
+            + " - When balance sheet, income statement, or cash flow data is returned, synthesize it directly into financial metrics: revenue, margins, EV/EBITDA, FCF, D/E ratio, current ratio. Compute what can be computed. State what cannot be derived from the available data in one sentence, then move on."
+            + " - Your output must be exactly, in this order: valuation → profitability → leverage → cash conversion → summary table, with actual values. Nothing else."
+            + " Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
             + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
             + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements."
-            + get_language_instruction(),
+            + get_language_instruction()
         )
 
         prompt = ChatPromptTemplate.from_messages(
