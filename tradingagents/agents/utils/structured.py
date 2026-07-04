@@ -46,14 +46,21 @@ def bind_structured(llm: Any, schema: type[T], agent_name: str) -> Any | None:
         return None
 
 
-def invoke_structured_or_freetext(
+def invoke_structured_capturing(
     structured_llm: Any | None,
     plain_llm: Any,
     prompt: Any,
     render: Callable[[T], str],
     agent_name: str,
-) -> str:
-    """Run the structured call and render to markdown; fall back to free-text on any failure.
+) -> tuple[str, T | None]:
+    """Like :func:`invoke_structured_or_freetext` but also return the parsed instance.
+
+    Returns ``(rendered_markdown, instance)`` where ``instance`` is the typed
+    Pydantic result on the structured path, or ``None`` when the free-text
+    fallback fired (weak model, provider without structured output, malformed
+    JSON). Callers that only need the markdown can use the wrapper below;
+    callers that also want to persist the typed decision (e.g. the Portfolio
+    Manager writing a structured run artifact) use this directly.
 
     ``prompt`` is whatever the underlying LLM accepts (a string for chat
     invocations, a list of message dicts for chat models that take that
@@ -68,7 +75,7 @@ def invoke_structured_or_freetext(
                 # the tool, leaving the parser with nothing to return. Treat it
                 # as a structured miss and fall back, with a clear reason.
                 raise ValueError("structured output returned no parsed result")
-            return render(result)
+            return render(result), result
         except Exception as exc:
             logger.warning(
                 "%s: structured-output invocation failed (%s); retrying once as free text",
@@ -76,4 +83,22 @@ def invoke_structured_or_freetext(
             )
 
     response = plain_llm.invoke(prompt)
-    return response.content
+    return response.content, None
+
+
+def invoke_structured_or_freetext(
+    structured_llm: Any | None,
+    plain_llm: Any,
+    prompt: Any,
+    render: Callable[[T], str],
+    agent_name: str,
+) -> str:
+    """Run the structured call and render to markdown; fall back to free-text on any failure.
+
+    Thin wrapper over :func:`invoke_structured_capturing` for the common case
+    where only the rendered markdown is needed.
+    """
+    text, _ = invoke_structured_capturing(
+        structured_llm, plain_llm, prompt, render, agent_name
+    )
+    return text

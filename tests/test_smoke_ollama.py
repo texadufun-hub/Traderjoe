@@ -90,7 +90,7 @@ def _minimal_pm_output():
         executive_summary="Enter at 192-195, 6% portfolio cap.",
         investment_thesis="AI capex cycle intact; institutional flows constructive.",
         price_target=225.00,
-        time_horizon="3-6 months",
+        time_horizon_days=120,
     )
     return render_pm_decision(decision)
 

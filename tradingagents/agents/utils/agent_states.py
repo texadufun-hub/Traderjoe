@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from langgraph.graph import MessagesState
 from typing_extensions import TypedDict
@@ -73,4 +73,7 @@ class AgentState(MessagesState):
         RiskDebateState, "Current state of the debate on evaluating risk"
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
+    # Typed PortfolioDecision instance retained for the structured run artifact.
+    # None when the Portfolio Manager fell back to free-text (no structured output).
+    pm_decision: Annotated[Any, "Typed PortfolioDecision from the Portfolio Manager (None on free-text fallback)"]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]

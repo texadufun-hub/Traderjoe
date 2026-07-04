@@ -36,6 +36,26 @@ def _coerce_optional_float(value):
     return value
 
 
+def _coerce_optional_int(value):
+    """Coerce a nullish/float-ish value to ``int`` or ``None``.
+
+    Models frequently answer a "days" field as ``"90"``, ``90.0``, or a
+    placeholder like ``"N/A"``. Normalise all of those so the structured call
+    validates instead of erroring and falling back to free text (#1058).
+    """
+    if isinstance(value, str) and value.strip().lower() in _NULLISH_FLOAT:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            return int(float(stripped))
+        except ValueError:
+            return value
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Shared rating types
 # ---------------------------------------------------------------------------
@@ -185,6 +205,20 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 # ---------------------------------------------------------------------------
 
 
+def signal_from_rating(rating: PortfolioRating) -> str:
+    """Collapse the 5-tier PM rating to a BUY / HOLD / SELL trade signal.
+
+    Overweight rides with Buy and Underweight with Sell so a single directional
+    signal can drive downstream execution and the side-correctness check, while
+    the finer 5-tier ``rating`` is still preserved on the decision itself.
+    """
+    if rating in (PortfolioRating.BUY, PortfolioRating.OVERWEIGHT):
+        return "BUY"
+    if rating in (PortfolioRating.SELL, PortfolioRating.UNDERWEIGHT):
+        return "SELL"
+    return "HOLD"
+
+
 class PortfolioDecision(BaseModel):
     """Structured output produced by the Portfolio Manager.
 
@@ -192,6 +226,10 @@ class PortfolioDecision(BaseModel):
     extraction pass is required. Field descriptions double as the model's
     output instructions, so the prompt body only needs to convey context and
     the rating-scale guidance.
+
+    The numeric trade levels (``entry_reference_price``, ``price_target``,
+    ``stop_loss``) let a downstream side-correctness check verify the target
+    and stop sit on the correct side of the entry for the chosen direction.
     """
 
     rating: PortfolioRating = Field(
@@ -213,19 +251,83 @@ class PortfolioDecision(BaseModel):
             "incorporate them; otherwise rely solely on the current analysis."
         ),
     )
+    size_fraction: float | None = Field(
+        default=None,
+        description=(
+            "Recommended position size as a fraction of total portfolio equity, "
+            "between 0.0 and 1.0 (e.g. 0.05 means 5% of the portfolio). Leave "
+            "null for a Hold."
+        ),
+    )
+    entry_reference_price: float | None = Field(
+        default=None,
+        description=(
+            "Reference entry / current spot price used to frame the trade, in the "
+            "instrument's quote currency. Required for Buy and Sell so the target "
+            "and stop can be validated against it; leave null for a Hold."
+        ),
+    )
     price_target: float | None = Field(
         default=None,
-        description="Optional target price in the instrument's quote currency.",
+        description=(
+            "Target price in the instrument's quote currency. For a Buy it must be "
+            "ABOVE the entry reference price; for a Sell it must be BELOW it. Leave "
+            "null for a Hold."
+        ),
     )
-    time_horizon: str | None = Field(
+    stop_loss: float | None = Field(
         default=None,
-        description="Optional recommended holding period, e.g. '3-6 months'.",
+        description=(
+            "Protective stop-loss price in the instrument's quote currency. For a "
+            "Buy it must be BELOW the entry reference price; for a Sell it must be "
+            "ABOVE it. Leave null for a Hold."
+        ),
+    )
+    confidence: float | None = Field(
+        default=None,
+        description=(
+            "Confidence in this decision expressed as a fraction between 0.0 and "
+            "1.0 (e.g. 0.7 = fairly confident). Leave null if not assessable."
+        ),
+    )
+    currency: str = Field(
+        default="USD",
+        description=(
+            "ISO 4217 quote currency of every price field above, e.g. USD, EUR, "
+            "JPY. Default USD if the instrument's quote currency is unknown."
+        ),
+    )
+    time_horizon_days: int | None = Field(
+        default=None,
+        description=(
+            "Expected holding period in calendar days (e.g. 90 for roughly three "
+            "months). Leave null for a Hold or when no horizon is implied."
+        ),
+    )
+    warning_message: str | None = Field(
+        default=None,
+        description=(
+            "Optional caveat or risk warning the desk must heed before trading. "
+            "Leave null when there is nothing to flag."
+        ),
     )
 
-    @field_validator("price_target", mode="before")
+    @field_validator(
+        "size_fraction",
+        "entry_reference_price",
+        "price_target",
+        "stop_loss",
+        "confidence",
+        mode="before",
+    )
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
+
+    @field_validator("time_horizon_days", mode="before")
+    @classmethod
+    def _nullish_int_to_none(cls, v):
+        return _coerce_optional_int(v)
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -234,19 +336,31 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     Memory log, CLI display, and saved report files all read this markdown,
     so the rendered output preserves the exact section headers (``**Rating**``,
     ``**Executive Summary**``, ``**Investment Thesis**``) that downstream
-    parsers and the report writers already handle.
+    parsers and the report writers already handle. The ``**Rating**`` line is
+    kept first so ``parse_rating`` still resolves the rating from the prose.
     """
     parts = [
         f"**Rating**: {decision.rating.value}",
+        f"**Signal**: {signal_from_rating(decision.rating)}",
         "",
         f"**Executive Summary**: {decision.executive_summary}",
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
     ]
+    if decision.entry_reference_price is not None:
+        parts.extend(["", f"**Entry Reference Price**: {decision.entry_reference_price} {decision.currency}"])
     if decision.price_target is not None:
-        parts.extend(["", f"**Price Target**: {decision.price_target}"])
-    if decision.time_horizon:
-        parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
+        parts.extend(["", f"**Price Target**: {decision.price_target} {decision.currency}"])
+    if decision.stop_loss is not None:
+        parts.extend(["", f"**Stop Loss**: {decision.stop_loss} {decision.currency}"])
+    if decision.size_fraction is not None:
+        parts.extend(["", f"**Position Size**: {decision.size_fraction:.2%} of portfolio"])
+    if decision.confidence is not None:
+        parts.extend(["", f"**Confidence**: {decision.confidence:.0%}"])
+    if decision.time_horizon_days is not None:
+        parts.extend(["", f"**Time Horizon**: {decision.time_horizon_days} days"])
+    if decision.warning_message:
+        parts.extend(["", f"**Warning**: {decision.warning_message}"])
     return "\n".join(parts)
 
 
