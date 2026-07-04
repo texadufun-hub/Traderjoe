@@ -35,12 +35,21 @@ class GraphSetup:
         deep_thinking_llm: Any,
         tool_nodes: dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
+        decision_llm: Any = None,
     ):
-        """Initialize with required components."""
+        """Initialize with required components.
+
+        ``decision_llm`` (optional) is a separate LLM instance for the
+        structured-output decision nodes (Research Manager, Trader, Portfolio
+        Manager). When ``None`` these fall back to ``deep_thinking_llm``, so
+        omitting it preserves the original single-provider wiring exactly.
+        """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
+        # Decision-layer nodes use this when provided, else the deep tier.
+        self.decision_llm = decision_llm or deep_thinking_llm
 
     def setup_graph(
         self, selected_analysts=("market", "social", "news", "fundamentals")
@@ -63,17 +72,19 @@ class GraphSetup:
             "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
         }
 
-        # Create researcher and manager nodes
+        # Create researcher and manager nodes. Research Manager, Trader, and
+        # Portfolio Manager are the structured-output decision layer and use
+        # decision_llm (falls back to deep_thinking_llm when not split out).
         bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
         bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
+        research_manager_node = create_research_manager(self.decision_llm)
+        trader_node = create_trader(self.decision_llm)
 
         # Create risk analysis nodes
         aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
         neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        portfolio_manager_node = create_portfolio_manager(self.decision_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)

@@ -12,6 +12,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DEEP_THINK_LLM":       "deep_think_llm",
     "TRADINGAGENTS_QUICK_THINK_LLM":      "quick_think_llm",
     "TRADINGAGENTS_LLM_BACKEND_URL":      "backend_url",
+    "TRADINGAGENTS_DECISION_LLM_PROVIDER": "decision_llm_provider",
+    "TRADINGAGENTS_DECISION_LLM_MODEL":    "decision_llm_model",
+    "TRADINGAGENTS_DECISION_BACKEND_URL":  "decision_backend_url",
     "TRADINGAGENTS_OUTPUT_LANGUAGE":      "output_language",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
@@ -86,6 +89,18 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # provider-specific URL here would leak (e.g. OpenAI's /v1 was previously
     # being forwarded to Gemini, producing malformed request URLs).
     "backend_url": None,
+    # Optional decision-layer LLM (hybrid provider split). When both
+    # decision_llm_provider and decision_llm_model are set, the structured-output
+    # decision nodes (Research Manager, Trader, Portfolio Manager) and the
+    # SignalProcessor use this LLM instead of the deep/quick tier, while the
+    # analyst/debate agents stay on llm_provider. Leave both None to run a single
+    # provider (original behavior). decision_backend_url is optional, like
+    # backend_url. Example: llm_provider=ollama + decision_llm_provider=google,
+    # decision_llm_model=gemini-3.5-flash for reliable structured output on the
+    # decision layer with a local model handling the narrative agents.
+    "decision_llm_provider": None,
+    "decision_llm_model": None,
+    "decision_backend_url": None,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"

@@ -3,6 +3,8 @@
 import json
 import logging
 import os
+import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ from tradingagents.agents.utils.agent_utils import (
     resolve_instrument_identity,
 )
 from tradingagents.agents.utils.memory import TradingMemoryLog
+from tradingagents.artifacts import persist_run_artifacts
 from tradingagents.dataflows.config import set_config
 from tradingagents.dataflows.utils import safe_ticker_component
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -69,6 +72,11 @@ class TradingAgentsGraph:
         # Update the interface's config
         set_config(self.config)
 
+        # Validate optional data-vendor credentials once, up front, so a bad key
+        # produces one clear, actionable message here instead of an identical
+        # vendor failure logged on every macro call throughout the run.
+        self._preflight_data_vendors()
+
         # Create necessary directories
         os.makedirs(self.config["data_cache_dir"], exist_ok=True)
         os.makedirs(self.config["results_dir"], exist_ok=True)
@@ -96,6 +104,28 @@ class TradingAgentsGraph:
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()
 
+        # Optional decision-layer LLM. When decision_llm_provider/model are set,
+        # build a separate client for the structured-output decision nodes
+        # (Research Manager, Trader, Portfolio Manager) and the SignalProcessor,
+        # leaving the analyst/debate layer on the base provider. This lets a
+        # reliable structured-output model (e.g. gemini-3.5-flash) drive the
+        # schema-enforced decisions while a local model handles the narrative
+        # agents. Unset -> None -> original single-provider behavior unchanged.
+        self.decision_llm = None
+        decision_provider = self.config.get("decision_llm_provider")
+        decision_model = self.config.get("decision_llm_model")
+        if decision_provider and decision_model:
+            decision_kwargs = self._get_provider_kwargs(decision_provider)
+            if self.callbacks:
+                decision_kwargs["callbacks"] = self.callbacks
+            decision_client = create_llm_client(
+                provider=decision_provider,
+                model=decision_model,
+                base_url=self.config.get("decision_backend_url"),
+                **decision_kwargs,
+            )
+            self.decision_llm = decision_client.get_llm()
+
         self.memory_log = TradingMemoryLog(self.config)
 
         # Create tool nodes
@@ -111,13 +141,37 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
+            decision_llm=self.decision_llm,
         )
 
         self.propagator = Propagator(
             max_recur_limit=self.config.get("max_recur_limit", 100),
         )
         self.reflector = Reflector(self.quick_thinking_llm)
-        self.signal_processor = SignalProcessor(self.quick_thinking_llm)
+        # SignalProcessor extracts the typed decision from the PM output, so it
+        # rides with the decision layer when one is configured.
+        self.signal_processor = SignalProcessor(self.decision_llm or self.quick_thinking_llm)
+
+        # Startup proof of the decision-layer wiring: the three decision nodes
+        # receive graph_setup.decision_llm verbatim (see GraphSetup.setup_graph),
+        # so logging that instance confirms whether the hybrid split reached them
+        # or silently fell back to the base/deep tier.
+        def _describe_llm(llm):
+            model = getattr(llm, "model", None) or getattr(llm, "model_name", None) or "?"
+            return f"{type(llm).__name__}<{model}>"
+
+        _decision_desc = _describe_llm(self.graph_setup.decision_llm)
+        _signal_desc = _describe_llm(self.signal_processor.quick_thinking_llm)
+        _banner = (
+            "[decision-layer wiring] "
+            f"Research Manager={_decision_desc} | Trader={_decision_desc} | "
+            f"Portfolio Manager={_decision_desc} | SignalProcessor={_signal_desc}"
+        )
+        # Print to stderr so it shows regardless of the root log level (the app
+        # sets no basicConfig, so an INFO logger line would be swallowed), and
+        # also emit through logging for anyone who has handlers attached.
+        print(_banner, file=sys.stderr, flush=True)
+        logger.info(_banner)
 
         # State tracking
         self.curr_state = None
@@ -129,10 +183,55 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _get_provider_kwargs(self) -> dict[str, Any]:
-        """Get provider-specific kwargs for LLM client creation."""
+    def _preflight_data_vendors(self) -> None:
+        """Validate optional data-vendor credentials once at startup.
+
+        Macro data is optional — the routing layer degrades gracefully when FRED
+        is unavailable — but a bad ``FRED_API_KEY`` otherwise only shows up as
+        the same vendor-failure line logged on every macro call, which buries the
+        cause. When FRED is in the configured macro chain, probe the key once and
+        emit a single clear message. Never raises: a credential problem must not
+        abort a run that can proceed without macro data.
+        """
+        macro_config = self.config.get("data_vendors", {}).get("macro_data", "")
+        macro_vendors = {v.strip() for v in macro_config.split(",")}
+        if "fred" not in macro_vendors:
+            return
+
+        # Imported here so the graph module does not hard-depend on the FRED
+        # vendor, and so tests can run without touching the network unless FRED
+        # is actually configured.
+        from tradingagents.dataflows.fred import (
+            FredInvalidKeyError,
+            FredNotConfiguredError,
+            validate_api_key,
+        )
+
+        try:
+            validate_api_key()
+            logger.info("FRED_API_KEY preflight OK — macro data available.")
+        except FredNotConfiguredError:
+            logger.warning(
+                "FRED is a configured macro vendor but FRED_API_KEY is not set — "
+                "macro data will be unavailable this run. Get a free key at "
+                "https://fred.stlouisfed.org/docs/api/api_key.html."
+            )
+        except FredInvalidKeyError as exc:
+            # stderr as well as logging: the app sets no basicConfig, so a bare
+            # warning would be swallowed, and this is exactly the message the
+            # user needs to see (mirrors the decision-layer banner above).
+            msg = f"[FRED preflight] {exc}"
+            print(msg, file=sys.stderr, flush=True)
+            logger.warning(msg)
+
+    def _get_provider_kwargs(self, provider: str | None = None) -> dict[str, Any]:
+        """Get provider-specific kwargs for LLM client creation.
+
+        ``provider`` defaults to the base ``llm_provider``; pass an explicit
+        provider (e.g. the decision-layer provider) to get its reasoning knobs.
+        """
         kwargs = {}
-        provider = self.config.get("llm_provider", "").lower()
+        provider = (provider or self.config.get("llm_provider", "")).lower()
 
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
@@ -374,8 +473,29 @@ class TradingAgentsGraph:
             )
         return write_report_tree(final_state, ticker, save_path)
 
+    def _resolved_artifact_config(self) -> dict:
+        """Provider/model actually driving the analyst and decision layers, for the artifact.
+
+        Mirrors the wiring in ``__init__``: analysts/debate run on ``llm_provider``
+        (quick-think tier is the representative analyst model), while the decision
+        nodes use the decision-layer LLM when the hybrid split is configured and
+        otherwise fall back to the deep-think tier (see ``GraphSetup``).
+        """
+        analyst_provider = self.config["llm_provider"]
+        analyst_model = self.config["quick_think_llm"]
+        decision_provider = self.config.get("decision_llm_provider") or analyst_provider
+        decision_model = self.config.get("decision_llm_model") or self.config["deep_think_llm"]
+        return {
+            "analysts": {"provider": analyst_provider, "model": analyst_model},
+            "decision": {"provider": decision_provider, "model": decision_model},
+        }
+
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock"):
         """Execute the graph and write the resulting state to disk and memory log."""
+        # One run ID shared across every artifact (JSON, complete report, sections).
+        run_id = str(uuid.uuid4())
+        self.run_id = run_id
+
         # Initialize state — inject memory log context for PM and the
         # deterministically resolved instrument identity for all agents.
         past_context = self.memory_log.get_past_context(company_name)
@@ -434,6 +554,22 @@ class TradingAgentsGraph:
             clear_checkpoint(
                 self.config["data_cache_dir"], company_name, str(trade_date)
             )
+
+        # Structured run artifact: write the typed PM decision + report sections
+        # to disk (JSON food + human MD) and fire-and-log the GCS upload. Best
+        # effort by contract — never let artifact I/O abort a completed run.
+        try:
+            persist_run_artifacts(
+                final_state=final_state,
+                pm_decision=final_state.get("pm_decision"),
+                ticker=company_name,
+                analysis_date=str(trade_date),
+                run_id=run_id,
+                results_dir=self.config["results_dir"],
+                resolved_config=self._resolved_artifact_config(),
+            )
+        except Exception as exc:  # noqa: BLE001 — artifact persistence is non-fatal
+            logger.warning("Run artifact persistence failed (non-fatal): %s", exc)
 
         return final_state, self.process_signal(final_state["final_trade_decision"])
 
