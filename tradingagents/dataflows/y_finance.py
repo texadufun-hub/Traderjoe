@@ -313,12 +313,43 @@ def get_fundamentals(
             ("Current Ratio", info.get("currentRatio")),
             ("Book Value", info.get("bookValue")),
             ("Free Cash Flow", info.get("freeCashflow")),
+            ("Cash and Equivalents", info.get("totalCash")),
         ]
+
+        # yfinance hands these fields to us as bare, unscaled numbers, which a
+        # reading LLM routinely misplaces the decimal on (e.g. 490467008 rendered
+        # as "$49.05B" instead of $490M). Format them explicitly at serialization
+        # time so the magnitude is unambiguous. Underlying values are unchanged —
+        # this is presentation only.
+        #
+        # - Aggregate dollar fields (bare large integers) -> $M / $B with sign.
+        # - Book Value is per-share, not an aggregate, so it gets a plain
+        #   two-decimal dollar format rather than the M/B scaling.
+        # - Debt to Equity already arrives on a percentage scale (6.555 == 6.56%),
+        #   so it is only labeled with "%", never rescaled.
+        dollar_aggregate_fields = {
+            "Market Cap", "Revenue (TTM)", "Gross Profit", "EBITDA",
+            "Net Income", "Free Cash Flow", "Cash and Equivalents",
+        }
+
+        def _format_value(label, value):
+            if label in dollar_aggregate_fields and isinstance(value, (int, float)):
+                magnitude = abs(value)
+                if magnitude >= 1e9:
+                    return f"${value / 1e9:.2f}B"
+                if magnitude >= 1e6:
+                    return f"${value / 1e6:.2f}M"
+                return f"${value:,.0f}"
+            if label == "Book Value" and isinstance(value, (int, float)):
+                return f"${value:.2f}"
+            if label == "Debt to Equity" and isinstance(value, (int, float)):
+                return f"{value:.2f}%"
+            return f"{value}"
 
         lines = []
         for label, value in fields:
             if value is not None:
-                lines.append(f"{label}: {value}")
+                lines.append(f"{label}: {_format_value(label, value)}")
 
         # yfinance returns a stub dict (e.g. {"trailingPegRatio": None}) for
         # unknown symbols, so `info` is truthy but every field is empty. Treat
