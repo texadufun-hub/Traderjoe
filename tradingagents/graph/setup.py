@@ -36,6 +36,7 @@ class GraphSetup:
         tool_nodes: dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
         decision_llm: Any = None,
+        market_analyst_llm: Any = None,
     ):
         """Initialize with required components.
 
@@ -43,6 +44,12 @@ class GraphSetup:
         structured-output decision nodes (Research Manager, Trader, Portfolio
         Manager). When ``None`` these fall back to ``deep_thinking_llm``, so
         omitting it preserves the original single-provider wiring exactly.
+
+        ``market_analyst_llm`` (optional) is a separate LLM instance for the
+        Market Analyst only — the one analyst that must reliably interpret raw
+        structured tool output (OHLCV CSV + indicator values). When ``None`` it
+        falls back to ``quick_thinking_llm``, so omitting it is a no-op. The
+        other analysts always stay on ``quick_thinking_llm``.
         """
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
@@ -50,6 +57,8 @@ class GraphSetup:
         self.conditional_logic = conditional_logic
         # Decision-layer nodes use this when provided, else the deep tier.
         self.decision_llm = decision_llm or deep_thinking_llm
+        # Market Analyst uses this when provided, else the quick tier.
+        self.market_analyst_llm = market_analyst_llm or quick_thinking_llm
 
     def setup_graph(
         self, selected_analysts=("market", "social", "news", "fundamentals")
@@ -66,7 +75,9 @@ class GraphSetup:
         plan = build_analyst_execution_plan(selected_analysts)
 
         analyst_factories = {
-            "market": lambda: create_market_analyst(self.quick_thinking_llm),
+            # Market Analyst routes to market_analyst_llm when configured (else
+            # quick tier); the other three analysts always use the quick tier.
+            "market": lambda: create_market_analyst(self.market_analyst_llm),
             "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
             "news": lambda: create_news_analyst(self.quick_thinking_llm),
             "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),

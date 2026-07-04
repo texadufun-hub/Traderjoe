@@ -126,6 +126,28 @@ class TradingAgentsGraph:
             )
             self.decision_llm = decision_client.get_llm()
 
+        # Optional Market-Analyst LLM. The Market Analyst is the one analyst that
+        # must reliably interpret raw structured tool output (OHLCV CSV +
+        # indicator values) into specific numbers that anchor the pipeline's
+        # entry_reference_price; qwen3:8b does this unreliably. When
+        # market_analyst_llm_provider/model are set, build a dedicated client
+        # (e.g. gemini-3.5-flash) for that node only. Unset -> None -> the Market
+        # Analyst stays on quick_thinking_llm (zero behavior change).
+        self.market_analyst_llm = None
+        market_provider = self.config.get("market_analyst_llm_provider")
+        market_model = self.config.get("market_analyst_llm_model")
+        if market_provider and market_model:
+            market_kwargs = self._get_provider_kwargs(market_provider)
+            if self.callbacks:
+                market_kwargs["callbacks"] = self.callbacks
+            market_client = create_llm_client(
+                provider=market_provider,
+                model=market_model,
+                base_url=self.config.get("market_analyst_backend_url"),
+                **market_kwargs,
+            )
+            self.market_analyst_llm = market_client.get_llm()
+
         self.memory_log = TradingMemoryLog(self.config)
 
         # Create tool nodes
@@ -142,6 +164,7 @@ class TradingAgentsGraph:
             self.tool_nodes,
             self.conditional_logic,
             decision_llm=self.decision_llm,
+            market_analyst_llm=self.market_analyst_llm,
         )
 
         self.propagator = Propagator(
@@ -172,6 +195,17 @@ class TradingAgentsGraph:
         # also emit through logging for anyone who has handlers attached.
         print(_banner, file=sys.stderr, flush=True)
         logger.info(_banner)
+
+        # Startup proof of the Market-Analyst wiring: the Market Analyst node
+        # receives graph_setup.market_analyst_llm verbatim (see
+        # GraphSetup.setup_graph), so logging that instance confirms whether the
+        # Gemini split reached it or fell back to the quick tier.
+        _market_banner = (
+            "[market-analyst wiring] "
+            f"Market Analyst={_describe_llm(self.graph_setup.market_analyst_llm)}"
+        )
+        print(_market_banner, file=sys.stderr, flush=True)
+        logger.info(_market_banner)
 
         # State tracking
         self.curr_state = None
