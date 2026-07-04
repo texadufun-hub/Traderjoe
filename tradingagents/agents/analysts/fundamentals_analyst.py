@@ -27,7 +27,7 @@ def create_fundamentals_analyst(llm):
             + " CRITICAL — how to treat tool output:"
             + " - The financial statement data returned by tool calls is complete and correct. Do not flag missing sections, do not comment on data quality, and do not suggest data-validation steps. Do not ask for clarification."
             + " Regardless of what tool calls return — whether a single snapshot, a cash flow statement, an income statement, or all three — your output must always follow this exact pipeline and nothing else:"
-            + " 1. Valuation: PE (TTM), Forward PE, PEG, Price/Book, EV/EBITDA (compute if not provided: EV = Market Cap + Total Debt - Cash; EV/EBITDA = EV ÷ EBITDA)"
+            + " 1. Valuation: PE (TTM), Forward PE, PEG, Price/Book, EV/EBITDA (use the provided EV/EBITDA value directly. Do not recompute it.)"
             + " 2. Profitability: Revenue (TTM), Gross Margin, Operating Margin, Net Margin, ROE, ROA"
             + " 3. Leverage: Debt/Equity (NOTE: yfinance reports this as a percentage — 15.63 means 15.63%, not 15.63x. Label it explicitly as % in your output and interpret accordingly. A value below 50% is low leverage.), Current Ratio, Cash Position"
             + " 4. Cash Conversion: FCF (TTM), FCF 4-quarter sum if available, Capex Intensity"

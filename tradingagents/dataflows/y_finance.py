@@ -289,6 +289,7 @@ def get_fundamentals(
             ("Sector", info.get("sector")),
             ("Industry", info.get("industry")),
             ("Market Cap", info.get("marketCap")),
+            ("Enterprise Value", info.get("enterpriseValue")),
             ("PE Ratio (TTM)", info.get("trailingPE")),
             ("Forward PE", info.get("forwardPE")),
             ("PEG Ratio", info.get("pegRatio")),
@@ -304,12 +305,14 @@ def get_fundamentals(
             ("Revenue (TTM)", info.get("totalRevenue")),
             ("Gross Profit", info.get("grossProfits")),
             ("EBITDA", info.get("ebitda")),
+            ("EV/EBITDA", info.get("enterpriseToEbitda")),
             ("Net Income", info.get("netIncomeToCommon")),
             ("Profit Margin", info.get("profitMargins")),
             ("Operating Margin", info.get("operatingMargins")),
             ("Return on Equity", info.get("returnOnEquity")),
             ("Return on Assets", info.get("returnOnAssets")),
             ("Debt to Equity", info.get("debtToEquity")),
+            ("Total Debt", info.get("totalDebt")),
             ("Current Ratio", info.get("currentRatio")),
             ("Book Value", info.get("bookValue")),
             ("Free Cash Flow", info.get("freeCashflow")),
@@ -328,8 +331,9 @@ def get_fundamentals(
         # - Debt to Equity already arrives on a percentage scale (6.555 == 6.56%),
         #   so it is only labeled with "%", never rescaled.
         dollar_aggregate_fields = {
-            "Market Cap", "Revenue (TTM)", "Gross Profit", "EBITDA",
-            "Net Income", "Free Cash Flow", "Cash and Equivalents",
+            "Market Cap", "Enterprise Value", "Revenue (TTM)", "Gross Profit",
+            "EBITDA", "Net Income", "Total Debt", "Free Cash Flow",
+            "Cash and Equivalents",
         }
 
         def _format_value(label, value):
@@ -344,6 +348,16 @@ def get_fundamentals(
                 return f"${value:.2f}"
             if label == "Debt to Equity" and isinstance(value, (int, float)):
                 return f"{value:.2f}%"
+            if label == "EV/EBITDA" and isinstance(value, (int, float)):
+                # yfinance pre-computes this; use it directly. A negative value
+                # means EBITDA is negative, so it is not a valid "cheapness"
+                # multiple — say so, so the analyst does not misread it.
+                if value < 0:
+                    return (
+                        f"{value:.2f}x (negative EBITDA — not meaningful as a "
+                        "valuation multiple)"
+                    )
+                return f"{value:.2f}x"
             return f"{value}"
 
         lines = []
