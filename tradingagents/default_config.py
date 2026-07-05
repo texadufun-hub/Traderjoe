@@ -104,6 +104,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "decision_llm_provider": None,
     "decision_llm_model": None,
     "decision_backend_url": None,
+    # Optional market-analyst-layer LLM override. None falls back to the base
+    # llm_provider / quick_think_llm pair used by all other analyst nodes.
+    "market_analyst_llm_provider": None,
+    "market_analyst_llm_model": None,
+    "market_analyst_backend_url": None,
     # Provider-specific thinking configuration
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"
